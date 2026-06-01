@@ -19,7 +19,7 @@ up-single zk='dry-run':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
+profiling: down _ensure-sp1-elfs _build-setup-image (_build-rust-images "devnet" "profiling")
     docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
 
 # Stops devnet and deletes all data
@@ -146,6 +146,19 @@ _install-nextest:
 
 [private]
 # Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
+# Ensures SP1 toolchain is installed and ELF artifacts are cached.
+# Installs SP1 automatically if cargo-prove is not found.
+_ensure-sp1-elfs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ~/.sp1/bin/cargo-prove &>/dev/null; then
+        echo "SP1 toolchain not found. Installing..."
+        curl -L https://sp1.succinct.xyz | bash
+        ~/.sp1/bin/sp1up
+    fi
+    cd "$(git rev-parse --show-toplevel)"
+    just succinct ensure-elfs
+
 _build-setup-image:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
@@ -170,7 +183,7 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_profile zk:
+_up-devnet compose_profile zk: _ensure-sp1-elfs
     #!/usr/bin/env bash
     set -euo pipefail
     compose_profile={{ quote(compose_profile) }}
